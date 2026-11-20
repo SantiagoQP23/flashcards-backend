@@ -29,7 +29,7 @@ func TestUsers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	u, err := CreateUser(ctx, pool, "Ana@Example.com", "hash", "Ana", "America/Guayaquil", "es")
+	u, err := CreateUser(ctx, pool, NewUser{Email: "Ana@Example.com", PasswordHash: "hash", DisplayName: "Ana", Timezone: "America/Guayaquil", Locale: "es"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,10 +45,39 @@ func TestUsers(t *testing.T) {
 		t.Fatalf("lookup is not case-insensitive: got %v, want %v", got.ID, u.ID)
 	}
 
-	if _, err := CreateUser(ctx, pool, "ANA@example.com", "hash", "", "UTC", "en"); !errors.Is(err, ErrConflict) {
+	if _, err := CreateUser(ctx, pool, NewUser{Email: "ANA@example.com", PasswordHash: "hash", Timezone: "UTC", Locale: "en"}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("duplicate email: err = %v, want ErrConflict", err)
 	}
 	if _, err := GetUserByEmail(ctx, pool, "nobody@example.com"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing user: err = %v, want ErrNotFound", err)
+	}
+
+	// Linking Google can drop an unproven password.
+	linked, err := LinkGoogle(ctx, pool, u.ID, "google-123", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if linked.PasswordHash != "" || !linked.EmailVerified || linked.GoogleSub != "google-123" {
+		t.Fatalf("link did not apply: %+v", linked)
+	}
+	if got, err := GetUserByGoogleSub(ctx, pool, "google-123"); err != nil || got.ID != u.ID {
+		t.Fatalf("by google sub: %+v %v", got, err)
+	}
+
+	// Partial update: only the given fields change; "" clears the name.
+	empty, accent, limit := "", "UK", 5
+	updated, err := UpdateUser(ctx, pool, u.ID, UserUpdate{DisplayName: &empty, PreferredAccent: &accent, DailyNewLimit: &limit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.DisplayName != "" || updated.PreferredAccent != "UK" || updated.DailyNewLimit != 5 || updated.Timezone != "America/Guayaquil" {
+		t.Fatalf("update: %+v", updated)
+	}
+
+	if err := DeleteUser(ctx, pool, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeleteUser(ctx, pool, u.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete: err = %v, want ErrNotFound", err)
 	}
 }

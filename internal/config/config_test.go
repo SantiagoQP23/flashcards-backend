@@ -1,40 +1,79 @@
 package config
 
 import (
-	"strings"
+	"log/slog"
+	"slices"
 	"testing"
 )
 
-func env(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
-
 func TestLoadDefaults(t *testing.T) {
-	cfg, err := load(env(map[string]string{"DATABASE_URL": "postgres://localhost:5432/db"}))
+	t.Setenv("DATABASE_URL", "postgres://localhost/test")
+	t.Setenv("APP_ENV", "")
+	t.Setenv("AUTO_MIGRATE", "")
+	t.Setenv("LOG_LEVEL", "")
+	t.Setenv("CORS_ALLOWED_ORIGINS", "")
+
+	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Env != "development" || cfg.Port != 3000 || cfg.DatabaseURL != "postgres://localhost:5432/db" {
-		t.Fatalf("unexpected config: %+v", cfg)
+	if cfg.Env != EnvDevelopment || cfg.HTTPAddr != ":8080" || !cfg.AutoMigrate || cfg.LogLevel != slog.LevelInfo {
+		t.Fatalf("unexpected defaults: %+v", cfg)
+	}
+	if !slices.Equal(cfg.CORSOrigins, []string{"http://localhost:8081"}) {
+		t.Fatalf("unexpected CORS origins: %v", cfg.CORSOrigins)
 	}
 }
 
-func TestLoadOverrides(t *testing.T) {
-	cfg, err := load(env(map[string]string{"DATABASE_URL": "postgres://x", "PORT": "8080", "APP_ENV": "production"}))
+func TestLoadProductionDefaults(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost/test")
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("AUTO_MIGRATE", "")
+	t.Setenv("CORS_ALLOWED_ORIGINS", "")
+
+	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Port != 8080 || cfg.Env != "production" {
-		t.Fatalf("unexpected config: %+v", cfg)
+	if cfg.AutoMigrate {
+		t.Fatal("AUTO_MIGRATE should default to false in production")
+	}
+	if len(cfg.CORSOrigins) != 0 {
+		t.Fatalf("production should allow no browser origins by default, got %v", cfg.CORSOrigins)
 	}
 }
 
-func TestLoadReportsEveryProblem(t *testing.T) {
-	_, err := load(env(map[string]string{"PORT": "abc", "APP_ENV": "staging"}))
-	if err == nil {
-		t.Fatal("expected an error")
+func TestLoadRequiresDatabaseURL(t *testing.T) {
+	t.Setenv("DATABASE_URL", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error when DATABASE_URL is missing")
 	}
-	for _, want := range []string{"DATABASE_URL", "PORT", "APP_ENV"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not mention %s", err, want)
-		}
+}
+
+func TestLoadRejectsUnknownEnv(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost/test")
+	t.Setenv("APP_ENV", "staging-ish")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for unknown APP_ENV")
+	}
+}
+
+func TestLoadRejectsBadValues(t *testing.T) {
+	for key, value := range map[string]string{"AUTO_MIGRATE": "sometimes", "LOG_LEVEL": "loud"} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "postgres://localhost/test")
+			t.Setenv("APP_ENV", "")
+			t.Setenv(key, value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("expected error for %s=%s", key, value)
+			}
+		})
+	}
+}
+
+func TestSplitList(t *testing.T) {
+	got := splitList(" a, ,b ,")
+	if !slices.Equal(got, []string{"a", "b"}) {
+		t.Fatalf("splitList = %v", got)
 	}
 }

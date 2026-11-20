@@ -1,21 +1,31 @@
-DATABASE_URL ?= postgresql://flashcards:flashcards@localhost:5432/flashcards
+-include .env
+export
 
-.PHONY: run migrate generate test lint check
+TEST_DATABASE_URL ?= postgres://flashcards:flashcards@localhost:5432/flashcards_test?sslmode=disable
 
-run: ## Start the API on :3000
-	DATABASE_URL=$(DATABASE_URL) go run ./cmd/api
+.PHONY: db-up db-down run migrate test test-db lint build
+
+db-up: ## Start Postgres in Docker
+	docker compose up -d --wait postgres
+
+db-down: ## Stop Postgres (keeps data)
+	docker compose down
+
+run: ## Run the API (applies migrations in development)
+	go run ./cmd/api
 
 migrate: ## Apply pending migrations
-	DATABASE_URL=$(DATABASE_URL) go run ./cmd/migrate
+	go run ./cmd/api migrate
 
-generate: ## Regenerate server code from api/openapi.yaml and queries from internal/db/queries
-	go generate ./...
+test: ## Unit tests
+	go test ./...
 
-test: ## Unit tests, plus database tests when DATABASE_URL is set
-	DATABASE_URL=$(DATABASE_URL) go test ./...
+test-db: ## Unit + database tests (needs `make db-up`)
+	TEST_DATABASE_URL=$(TEST_DATABASE_URL) go test ./...
 
 lint:
-	golangci-lint run ./...
+	go vet ./...
+	test -z "$$(gofmt -l .)"
 
-check: generate lint test ## Everything CI runs
-	git diff --exit-code -- internal/httpapi/api.gen.go internal/db
+build:
+	CGO_ENABLED=0 go build -o bin/api ./cmd/api

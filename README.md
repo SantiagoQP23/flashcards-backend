@@ -36,6 +36,7 @@ Check it: `curl localhost:8080/healthz` (process is up) and `curl localhost:8080
 | `internal/config` | Environment variables |
 | `internal/auth` | Passwords (argon2id), access tokens (JWT), refresh tokens, Google ID token check |
 | `internal/database` | pgx connection pool |
+| `internal/dictionary` | Dictionary providers (Free Dictionary, Merriam-Webster Learner's as the paid fallback) and the normaliser that turns their answers into one shape; fixtures in `testdata/` |
 | `internal/store` | Hand-written SQL, one file per table group (`InTx`, `ErrNotFound`, `ErrConflict`); tests clear data with `DELETE FROM users`, not `TRUNCATE ... CASCADE`, which would also wipe the shared dictionary |
 | `internal/httpapi` | Chi router, middleware, handlers, JSON helpers |
 | `migrations` | goose SQL files, embedded in the binary |
@@ -54,6 +55,8 @@ Check it: `curl localhost:8080/healthz` (process is up) and `curl localhost:8080
 | `ACCESS_TOKEN_TTL` / `REFRESH_TOKEN_TTL` | `15m` / `720h` | |
 | `GOOGLE_CLIENT_IDS` | (empty: Google sign-in off) | Comma-separated OAuth client IDs whose ID tokens are accepted |
 | `AUTH_RATE_LIMIT` | `20` | Requests per minute per IP on `/v1/auth` (`0` disables) |
+| `DICTIONARY_TIMEOUT` | `3s` | How long each dictionary provider gets to answer |
+| `MW_LEARNERS_API_KEY` | (empty: no fallback) | Merriam-Webster Learner's Dictionary key ([dictionaryapi.com](https://dictionaryapi.com)); used only when Free Dictionary is down |
 
 ## API
 
@@ -77,6 +80,9 @@ Signed-in routes take `Authorization: Bearer <access_token>`. Without one the an
 | `GET /v1/me` | signed in | user |
 | `PATCH /v1/me` | signed in | `{display_name?, timezone?, locale?, preferred_accent?, daily_new_limit?}` → user. `""` clears `display_name` |
 | `DELETE /v1/me` | signed in | `204`; deletes the account and everything in it |
+| `GET /v1/dictionary/words/{word}` | signed in | Look up a word or phrase (URL-escaped, any case) → word. Errors: `invalid_word` (1 to 100 characters with a letter), `word_not_found` (404), `dictionary_unavailable` (503, try again later) |
+| `GET /v1/dictionary/history` | signed in | `?limit` (1 to 50, default 20) → `{data: [{query, found, searched_at}]}`, newest first, one row per word |
+| `DELETE /v1/dictionary/history` | signed in | `204`; clears the search history |
 | `GET /v1/decks` | signed in | `{data: [deck]}`, oldest first |
 | `POST /v1/decks` | signed in | `{name}` → `201` deck. Errors: `invalid_deck_name` (1 to 60 characters), `deck_name_taken` (409, ignores case) |
 | `PATCH /v1/decks/{id}` | signed in | `{name}` → deck. Errors as above, plus `404 deck_not_found` |
@@ -107,7 +113,32 @@ An **entry** (a saved word) is:
 
 `part_of_speech` is `""` or one of `noun`, `verb`, `adjective`, `adverb`, `pronoun`, `preposition`, `conjunction`, `interjection`, `phrase`. `is_custom` is true for a meaning the user typed in; only those can be rewritten. `flashcard.state` is `NEW`, `LEARNING`, `REVIEW` or `RELEARNING`.
 
-Routes for search and reviews are added milestone by milestone (see the build plan).
+A **word** (a dictionary lookup) is:
+
+```json
+{
+  "id": "…", "word": "resilient",
+  "phonetics": {"us": "/ɹɪˈzɪli.ənt/", "uk": "/rɪˈzɪlɪənt/"},
+  "audio": [{"accent": "US", "url": "https://…/resilient-us.mp3", "source": "PROVIDER"}],
+  "meanings": [
+    {"part_of_speech": "adjective", "definitions": [
+      {"id": "…", "text": "Able to recover quickly…", "example": "Children are resilient.", "synonyms": ["tough"],
+       "is_custom": false, "saved": {"entry_id": "…", "deck_id": "…"}}
+    ]}
+  ],
+  "attribution": {"source": "Wiktionary via Free Dictionary API", "license": "CC BY-SA 3.0", "urls": ["https://en.wiktionary.org/wiki/resilient"]}
+}
+```
+
+`meanings` groups the definitions by part of speech, in the order each first appears; `part_of_speech` takes the same values as in an entry. `saved` is `null` unless the user saved that meaning (save it with `POST /v1/vocabulary` and `word_id` + `definition_id`). Meanings the user typed in for this word come last with `is_custom: true`. `phonetics` values and `example` are `""` when missing, and `audio` lists recorded pronunciations (at most one per accent; the app falls back to device speech when an accent has none). Show `attribution` on the word screen: Wiktionary content is CC BY-SA.
+
+Routes for reviews are added milestone by milestone (see the build plan).
+
+### Dictionary
+
+- A lookup reads the shared cache (`dictionary_words`, `definitions`, `word_audio`) and asks a provider only for a word we don't have yet; the answer is then kept for everyone, forever. Unknown words aren't stored, only recorded in the user's history (`found: false`). Lookups of the same word at the same moment share one provider call.
+- The provider is [Free Dictionary API](https://dictionaryapi.dev) (Wiktionary). When it times out (`DICTIONARY_TIMEOUT`) or fails, and `MW_LEARNERS_API_KEY` is set, Merriam-Webster's Learner's Dictionary answers instead. A "not found" from Free Dictionary is final, so the paid API only covers outages.
+- Starter-deck words hold only our one meaning, so their first search adds the provider's meanings after it (the saved meaning stays). If the provider is down, the starter meaning is shown alone.
 
 ### Decks and saved words
 

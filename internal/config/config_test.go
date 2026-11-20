@@ -88,13 +88,16 @@ func TestLoadAuthDefaults(t *testing.T) {
 	t.Setenv("REFRESH_TOKEN_TTL", "")
 	t.Setenv("GOOGLE_CLIENT_IDS", "")
 	t.Setenv("AUTH_RATE_LIMIT", "")
+	t.Setenv("DICTIONARY_TIMEOUT", "")
+	t.Setenv("MW_LEARNERS_API_KEY", "")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(cfg.JWTSecret) != devJWTSecret || cfg.AccessTokenTTL != 15*time.Minute ||
-		cfg.RefreshTokenTTL != 720*time.Hour || cfg.GoogleClientIDs != nil || cfg.AuthRateLimit != 20 {
+		cfg.RefreshTokenTTL != 720*time.Hour || cfg.GoogleClientIDs != nil || cfg.AuthRateLimit != 20 ||
+		cfg.DictionaryTimeout != 3*time.Second || cfg.MerriamWebsterKey != "" {
 		t.Fatalf("unexpected auth defaults: %+v", cfg)
 	}
 }

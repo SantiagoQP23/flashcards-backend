@@ -35,6 +35,11 @@ type Config struct {
 	GoogleClientIDs []string
 	// AuthRateLimit is requests per minute per IP on /v1/auth (0 disables).
 	AuthRateLimit int
+	// DictionaryTimeout is how long each dictionary provider gets to answer.
+	DictionaryTimeout time.Duration
+	// MerriamWebsterKey turns on the paid fallback dictionary (Merriam-
+	// Webster's Learner's). Empty means Free Dictionary only.
+	MerriamWebsterKey string
 }
 
 // devJWTSecret is only used when APP_ENV=development and JWT_SECRET is unset.
@@ -82,6 +87,7 @@ func Load() (Config, error) {
 	}{
 		{"ACCESS_TOKEN_TTL", "15m", &cfg.AccessTokenTTL},
 		{"REFRESH_TOKEN_TTL", "720h", &cfg.RefreshTokenTTL},
+		{"DICTIONARY_TIMEOUT", "3s", &cfg.DictionaryTimeout},
 	}
 	for _, d := range durations {
 		v, err := time.ParseDuration(getenv(d.key, d.def))
@@ -92,6 +98,7 @@ func Load() (Config, error) {
 	}
 
 	cfg.GoogleClientIDs = splitList(os.Getenv("GOOGLE_CLIENT_IDS"))
+	cfg.MerriamWebsterKey = strings.TrimSpace(os.Getenv("MW_LEARNERS_API_KEY"))
 
 	limit, err := strconv.Atoi(getenv("AUTH_RATE_LIMIT", "20"))
 	if err != nil || limit < 0 {

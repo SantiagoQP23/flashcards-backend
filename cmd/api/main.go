@@ -23,6 +23,7 @@ import (
 	"github.com/SantiagoQP23/flashcards-backend/internal/auth"
 	"github.com/SantiagoQP23/flashcards-backend/internal/config"
 	"github.com/SantiagoQP23/flashcards-backend/internal/database"
+	"github.com/SantiagoQP23/flashcards-backend/internal/dictionary"
 	"github.com/SantiagoQP23/flashcards-backend/internal/httpapi"
 	"github.com/SantiagoQP23/flashcards-backend/migrations"
 )
@@ -75,6 +76,7 @@ func run(args []string) error {
 			Google:        auth.NewGoogleVerifier(cfg.GoogleClientIDs),
 			RefreshTTL:    cfg.RefreshTokenTTL,
 			AuthRateLimit: cfg.AuthRateLimit,
+			Dictionary:    newDictionary(cfg),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -108,4 +110,14 @@ func newLogger(cfg config.Config) *slog.Logger {
 		return slog.New(slog.NewTextHandler(os.Stdout, opts))
 	}
 	return slog.New(slog.NewJSONHandler(os.Stdout, opts))
+}
+
+// newDictionary is Free Dictionary, with Merriam-Webster covering its
+// outages when MW_LEARNERS_API_KEY is set.
+func newDictionary(cfg config.Config) dictionary.Provider {
+	primary := dictionary.NewFreeDictionary(cfg.DictionaryTimeout)
+	if mw := dictionary.NewMerriamWebster(cfg.MerriamWebsterKey, cfg.DictionaryTimeout); mw != nil {
+		return dictionary.WithFallback(primary, mw)
+	}
+	return primary
 }

@@ -38,7 +38,7 @@ type testAPI struct {
 	pool    *pgxpool.Pool
 }
 
-func newTestAPI(t *testing.T, google auth.GoogleVerifier) *testAPI {
+func newTestAPI(t *testing.T, google auth.GoogleVerifier, opts ...func(*Deps)) *testAPI {
 	t.Helper()
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
@@ -56,14 +56,18 @@ func newTestAPI(t *testing.T, google auth.GoogleVerifier) *testAPI {
 	if _, err := pool.Exec(ctx, `DELETE FROM users`); err != nil {
 		t.Fatal(err)
 	}
-	h := NewRouter(Deps{
+	deps := Deps{
 		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 		DB:           pool,
 		Pool:         pool,
 		AccessTokens: auth.NewAccessTokens([]byte("test-secret-test-secret-test-secret"), 15*time.Minute),
 		Google:       google,
 		RefreshTTL:   24 * time.Hour,
-	})
+	}
+	for _, o := range opts {
+		o(&deps)
+	}
+	h := NewRouter(deps)
 	return &testAPI{t: t, handler: h, pool: pool}
 }
 

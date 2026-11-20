@@ -92,6 +92,9 @@ func (a *api) handleRegister(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
+		if err := store.CreateStarterDeck(r.Context(), tx, user.ID, starterDeckName[user.Locale]); err != nil {
+			return err
+		}
 		session, err = a.issueSession(r.Context(), tx, user, uuid.Nil)
 		return err
 	})
@@ -227,6 +230,9 @@ func (a *api) handleGoogle(w http.ResponseWriter, r *http.Request) {
 					Locale:        requestLocale(r),
 				})
 				if err != nil {
+					return err
+				}
+				if err := store.CreateStarterDeck(ctx, tx, user.ID, starterDeckName[user.Locale]); err != nil {
 					return err
 				}
 			default:

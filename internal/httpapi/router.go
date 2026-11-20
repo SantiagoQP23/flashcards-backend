@@ -96,6 +96,16 @@ func NewRouter(d Deps) http.Handler {
 			r.Get("/me", a.handleGetMe)
 			r.Patch("/me", a.handleUpdateMe)
 			r.Delete("/me", a.handleDeleteMe)
+
+			r.Get("/decks", a.handleListDecks)
+			r.Post("/decks", a.handleCreateDeck)
+			r.Patch("/decks/{id}", a.handleRenameDeck)
+			r.Delete("/decks/{id}", a.handleDeleteDeck)
+
+			r.Get("/vocabulary", a.handleListVocabulary)
+			r.Post("/vocabulary", a.handleCreateVocabulary)
+			r.Patch("/vocabulary/{id}", a.handleUpdateVocabulary)
+			r.Delete("/vocabulary/{id}", a.handleDeleteVocabulary)
 		})
 	})
 

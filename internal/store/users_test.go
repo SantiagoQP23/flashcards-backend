@@ -25,7 +25,7 @@ func TestUsers(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	if _, err := pool.Exec(ctx, `TRUNCATE users CASCADE`); err != nil {
+	if _, err := pool.Exec(ctx, `DELETE FROM users`); err != nil {
 		t.Fatal(err)
 	}
 

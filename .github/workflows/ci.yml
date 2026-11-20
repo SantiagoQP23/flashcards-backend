@@ -22,22 +22,18 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgresql://flashcards:flashcards@localhost:5432/flashcards
-      NODE_ENV: test
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-go@v5
         with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm format:check
-      - run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: pnpm db:deploy
-      - run: pnpm test:e2e
-      - name: openapi.json is up to date
+          go-version-file: go.mod
+      - name: Generated code is up to date
         run: |
-          pnpm openapi
-          git diff --exit-code openapi.json || (echo "Run 'pnpm openapi' and commit openapi.json" && exit 1)
+          go generate ./...
+          git diff --exit-code || (echo "Run 'make generate' and commit the result" && exit 1)
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.15.0
+      - run: go build ./...
+      - run: go run ./cmd/migrate
+      - run: go test -race ./...

@@ -1,30 +1,31 @@
 # flashcards-backend
 
-API for Intenli Flashcards: dictionary lookup, decks, saved vocabulary, spaced-repetition reviews and progress. NestJS 12 (ESM), PostgreSQL with Prisma 7, zod validation, Vitest.
+API for Intenli Flashcards: dictionary lookup, decks, saved vocabulary, spaced-repetition reviews and progress. Go with [chi](https://github.com/go-chi/chi), PostgreSQL through pgx, [sqlc](https://sqlc.dev) queries, [goose](https://github.com/pressly/goose) migrations, and a spec-first OpenAPI contract with [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen).
 
 ## Run it locally
 
 ```sh
-cp .env.example .env
-docker compose up -d        # PostgreSQL 16 on localhost:5432
-pnpm install                # also generates the Prisma client
-pnpm db:migrate             # apply migrations
-pnpm dev                    # http://localhost:3000/v1, docs at /docs
+docker compose up -d   # PostgreSQL 16 on localhost:5432
+make migrate           # apply migrations/*.sql
+make run               # http://localhost:3000/v1/health, spec at /openapi.yaml
 ```
 
-## Scripts
+## How the code is organised
 
-| Script                                         | What it does                                                                 |
-| ---------------------------------------------- | ---------------------------------------------------------------------------- |
-| `pnpm dev`                                     | Start with watch mode                                                        |
-| `pnpm lint` / `pnpm typecheck` / `pnpm format` | Code checks                                                                  |
-| `pnpm test`                                    | Unit tests (`src/**/*.spec.ts`)                                              |
-| `pnpm test:e2e`                                | End-to-end tests against the database in `.env` (`test/**/*.e2e-spec.ts`)    |
-| `pnpm db:migrate`                              | Create and apply a migration after changing `prisma/schema.prisma`           |
-| `pnpm openapi`                                 | Rewrite `openapi.json`, which `flashcards-app` generates its API client from |
+| Path | What lives there |
+| --- | --- |
+| `api/openapi.yaml` | The API contract. The server interface and the app's TypeScript client are both generated from it. |
+| `cmd/api`, `cmd/migrate` | The API server and the migration runner. |
+| `internal/httpapi` | chi router, middleware and the handlers implementing the generated `StrictServerInterface`. |
+| `internal/db` | pgx pool, migrations runner, and sqlc code generated from `internal/db/queries/*.sql`. |
+| `internal/config` | Environment settings (`APP_ENV`, `PORT`, `DATABASE_URL`). |
+| `migrations` | goose SQL migrations, embedded in the binary. |
 
-## Conventions
+## Adding an endpoint
 
-- All routes live under `/v1`.
-- Request and response shapes are zod schemas. Pass them to `@Body({ schema })`, `@Query({ schema })` or `@Param('id', { schema })` for validation, and to `@ApiOkResponse({ standardSchema })` so they appear in `openapi.json`.
-- After changing any route or schema, run `pnpm openapi` and commit the result; CI fails otherwise.
+1. Describe it in `api/openapi.yaml`.
+2. Add any SQL to `internal/db/queries/` (and a migration if the schema changes).
+3. `make generate`, then implement the new method on `httpapi.Server`. The build fails until you do.
+4. `make lint test`, and commit the generated files.
+
+Code generators run through `go tool`, so they need nothing installed beyond Go. Linting uses [golangci-lint](https://golangci-lint.run) v2.

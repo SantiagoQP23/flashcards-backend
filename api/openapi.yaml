@@ -1,0 +1,45 @@
+openapi: 3.0.3
+info:
+  title: Intenli Flashcards API
+  version: 0.1.0
+  description: >
+    Source of truth for the API. The Go server code (internal/httpapi/api.gen.go) and the
+    app's TypeScript client are both generated from this file.
+paths:
+  /v1/health:
+    get:
+      operationId: getHealth
+      tags: [health]
+      summary: Liveness and database check
+      security: []
+      responses:
+        '200':
+          description: The API and its database are up.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        '503':
+          description: The database is unreachable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status, database]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        database:
+          type: string
+          enum: [up, down]
+security:
+  - bearerAuth: []

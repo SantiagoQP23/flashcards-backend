@@ -1,9 +1,9 @@
 # flashcards-backend
 
-Backend of Intenli Flashcards. The build plan (milestones, data model, API contracts) is the "Intenli Flashcards Build Plan" doc; the mobile app is `SantiagoQP23/flashcards-app`.
+Backend of Intenli Flashcards in Go. The build plan (milestones, data model, API contracts) is the "Intenli Flashcards Build Plan" doc; the mobile app is `SantiagoQP23/flashcards-app`.
 
-- NestJS 12 is ESM only and so is this project: relative imports end in `.js`, use `import.meta.dirname` instead of `__dirname`, and tests run on Vitest (`vi.fn()`).
-- Validation uses Nest's built-in `StandardSchemaValidationPipe` with zod schemas (`@Body({ schema })`); document responses with `@ApiOkResponse({ standardSchema })`. Don't add class-validator or nestjs-zod.
-- Prisma 7: the client is generated into `src/generated/prisma` (git-ignored) and connects through `@prisma/adapter-pg`. The database URL comes from `prisma.config.ts`, not the schema.
-- After changing routes or schemas run `pnpm openapi` and commit `openapi.json`; the app's client is generated from it.
-- Before pushing: `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm test:e2e`.
+- Router: chi. Handlers implement the oapi-codegen `StrictServerInterface` generated from `api/openapi.yaml` (spec first: change the spec, `make generate`, then implement).
+- Database: PostgreSQL via pgx/v5. Queries are written in `internal/db/queries/*.sql` and generated with sqlc; schema changes are new goose files in `migrations/` (never edit an applied one).
+- Generators run via `go tool` (see the `tool` block in go.mod). Commit generated files; CI fails if they are stale.
+- The app regenerates its TypeScript client from `api/openapi.yaml`, so keep response shapes stable or update the app in the same change.
+- Before pushing: `make generate lint test` (tests that need Postgres run when `DATABASE_URL` is set).

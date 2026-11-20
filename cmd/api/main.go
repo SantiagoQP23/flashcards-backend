@@ -16,7 +16,11 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	// Time zone names are validated and used for "today", and the
+	// distroless image has no zoneinfo of its own guaranteed.
+	_ "time/tzdata"
 
+	"github.com/SantiagoQP23/flashcards-backend/internal/auth"
 	"github.com/SantiagoQP23/flashcards-backend/internal/config"
 	"github.com/SantiagoQP23/flashcards-backend/internal/database"
 	"github.com/SantiagoQP23/flashcards-backend/internal/httpapi"
@@ -63,9 +67,14 @@ func run(args []string) error {
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.NewRouter(httpapi.Deps{
-			Logger:      logger,
-			DB:          pool,
-			CORSOrigins: cfg.CORSOrigins,
+			Logger:        logger,
+			DB:            pool,
+			Pool:          pool,
+			CORSOrigins:   cfg.CORSOrigins,
+			AccessTokens:  auth.NewAccessTokens(cfg.JWTSecret, cfg.AccessTokenTTL),
+			Google:        auth.NewGoogleVerifier(cfg.GoogleClientIDs),
+			RefreshTTL:    cfg.RefreshTokenTTL,
+			AuthRateLimit: cfg.AuthRateLimit,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

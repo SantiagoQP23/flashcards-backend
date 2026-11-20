@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"slices"
 	"testing"
+	"time"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -28,6 +29,7 @@ func TestLoadDefaults(t *testing.T) {
 func TestLoadProductionDefaults(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://localhost/test")
 	t.Setenv("APP_ENV", "production")
+	t.Setenv("JWT_SECRET", "a-production-secret-of-32-characters!")
 	t.Setenv("AUTO_MIGRATE", "")
 	t.Setenv("CORS_ALLOWED_ORIGINS", "")
 
@@ -75,5 +77,37 @@ func TestSplitList(t *testing.T) {
 	got := splitList(" a, ,b ,")
 	if !slices.Equal(got, []string{"a", "b"}) {
 		t.Fatalf("splitList = %v", got)
+	}
+}
+
+func TestLoadAuthDefaults(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost/test")
+	t.Setenv("APP_ENV", "")
+	t.Setenv("JWT_SECRET", "")
+	t.Setenv("ACCESS_TOKEN_TTL", "")
+	t.Setenv("REFRESH_TOKEN_TTL", "")
+	t.Setenv("GOOGLE_CLIENT_IDS", "")
+	t.Setenv("AUTH_RATE_LIMIT", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(cfg.JWTSecret) != devJWTSecret || cfg.AccessTokenTTL != 15*time.Minute ||
+		cfg.RefreshTokenTTL != 720*time.Hour || cfg.GoogleClientIDs != nil || cfg.AuthRateLimit != 20 {
+		t.Fatalf("unexpected auth defaults: %+v", cfg)
+	}
+}
+
+func TestLoadRequiresJWTSecretInProduction(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost/test")
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("JWT_SECRET", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error when JWT_SECRET is missing in production")
+	}
+	t.Setenv("JWT_SECRET", "too-short")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error when JWT_SECRET is too short")
 	}
 }

@@ -10,6 +10,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/go-chi/httprate"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/SantiagoQP23/flashcards-backend/internal/auth"
+	"github.com/SantiagoQP23/flashcards-backend/internal/store"
 )
 
 // Pinger is the part of the database pool the health checks need.
@@ -20,10 +25,37 @@ type Pinger interface {
 type Deps struct {
 	Logger      *slog.Logger
 	DB          Pinger
+	Pool        *pgxpool.Pool
 	CORSOrigins []string
+
+	AccessTokens *auth.AccessTokens
+	Google       auth.GoogleVerifier
+	RefreshTTL   time.Duration
+	// AuthRateLimit is requests per minute per IP on /v1/auth (0 disables).
+	AuthRateLimit int
+}
+
+type api struct {
+	db         store.DB
+	pool       *pgxpool.Pool
+	access     *auth.AccessTokens
+	google     auth.GoogleVerifier
+	refreshTTL time.Duration
+	now        func() time.Time
 }
 
 func NewRouter(d Deps) http.Handler {
+	a := &api{
+		pool:       d.Pool,
+		access:     d.AccessTokens,
+		google:     d.Google,
+		refreshTTL: d.RefreshTTL,
+		now:        time.Now,
+	}
+	if d.Pool != nil {
+		a.db = d.Pool
+	}
+
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
@@ -41,6 +73,31 @@ func NewRouter(d Deps) http.Handler {
 
 	r.Get("/healthz", handleLiveness)
 	r.Get("/readyz", handleReadiness(d.DB))
+
+	r.Route("/v1", func(r chi.Router) {
+		r.Route("/auth", func(r chi.Router) {
+			if d.AuthRateLimit > 0 {
+				r.Use(httprate.Limit(d.AuthRateLimit, time.Minute,
+					httprate.WithKeyFuncs(httprate.KeyByIP),
+					httprate.WithLimitHandler(func(w http.ResponseWriter, _ *http.Request) {
+						writeError(w, http.StatusTooManyRequests, "rate_limited", "too many attempts, try again in a minute")
+					})))
+			}
+			r.Post("/register", a.handleRegister)
+			r.Post("/login", a.handleLogin)
+			r.Post("/google", a.handleGoogle)
+			r.Post("/refresh", a.handleRefresh)
+			r.Post("/logout", a.handleLogout)
+		})
+
+		// Everything else needs a signed-in user.
+		r.Group(func(r chi.Router) {
+			r.Use(a.requireAuth)
+			r.Get("/me", a.handleGetMe)
+			r.Patch("/me", a.handleUpdateMe)
+			r.Delete("/me", a.handleDeleteMe)
+		})
+	})
 
 	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "resource not found")

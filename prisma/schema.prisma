@@ -1,0 +1,205 @@
+// Intenli Flashcards data model.
+// Shared dictionary data (DictionaryWord, Definition, WordAudio) is written once and reused by every user.
+// Everything a user owns hangs off User and is soft-deleted so sync can tell devices what disappeared.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Accent {
+  US
+  UK
+}
+
+enum AudioSource {
+  PROVIDER
+  KOKORO
+}
+
+enum CardState {
+  NEW
+  LEARNING
+  REVIEW
+  RELEARNING
+}
+
+enum Rating {
+  AGAIN
+  HARD
+  GOOD
+  EASY
+}
+
+model User {
+  id              String   @id @default(uuid())
+  email           String   @unique
+  passwordHash    String? // null for Google-only accounts
+  googleSub       String?  @unique // Google account id
+  displayName     String?
+  timezone        String   @default("UTC") // IANA name, used for "today" and streaks
+  preferredAccent Accent   @default(US)
+  dailyNewLimit   Int      @default(20)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  decks         Deck[]
+  entries       VocabularyEntry[]
+  flashcards    Flashcard[]
+  reviews       Review[]
+  searches      SearchHistory[]
+  refreshTokens RefreshToken[]
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model DictionaryWord {
+  id         String   @id @default(uuid())
+  language   String   @default("en")
+  lemma      String // lowercased, trimmed search key
+  phoneticUs String?
+  phoneticUk String?
+  source     String // "free-dictionary", ...
+  sourceUrls String[]
+  fetchedAt  DateTime @default(now())
+
+  definitions Definition[]
+  audio       WordAudio[]
+  entries     VocabularyEntry[]
+  searches    SearchHistory[]
+
+  @@unique([language, lemma])
+}
+
+model Definition {
+  id           String   @id @default(uuid())
+  wordId       String
+  partOfSpeech String // noun, verb, adjective...
+  text         String
+  example      String?
+  synonyms     String[]
+  antonyms     String[]
+  position     Int // order from the provider
+
+  word    DictionaryWord    @relation(fields: [wordId], references: [id], onDelete: Cascade)
+  entries VocabularyEntry[]
+
+  @@index([wordId])
+}
+
+model WordAudio {
+  id     String      @id @default(uuid())
+  wordId String
+  accent Accent
+  source AudioSource
+  url    String
+  voice  String?
+
+  word DictionaryWord @relation(fields: [wordId], references: [id], onDelete: Cascade)
+
+  @@unique([wordId, accent, source])
+}
+
+model SearchHistory {
+  id         String   @id @default(uuid())
+  userId     String
+  query      String
+  wordId     String? // null when the word was not found
+  searchedAt DateTime @default(now())
+
+  user User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  word DictionaryWord? @relation(fields: [wordId], references: [id], onDelete: SetNull)
+
+  @@index([userId, searchedAt])
+}
+
+model Deck {
+  id        String    @id @default(uuid())
+  userId    String
+  name      String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entries VocabularyEntry[]
+
+  @@index([userId])
+}
+
+model VocabularyEntry {
+  id           String    @id @default(uuid())
+  userId       String
+  deckId       String
+  wordId       String
+  definitionId String // the meaning the user chose to learn
+  note         String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deck       Deck           @relation(fields: [deckId], references: [id])
+  word       DictionaryWord @relation(fields: [wordId], references: [id])
+  definition Definition     @relation(fields: [definitionId], references: [id])
+  flashcard  Flashcard?
+
+  @@unique([userId, definitionId]) // one card per meaning per user
+  @@index([userId, deckId])
+}
+
+model Flashcard {
+  id            String    @id @default(uuid())
+  entryId       String    @unique
+  userId        String // denormalised for the due query
+  state         CardState @default(NEW)
+  due           DateTime  @default(now())
+  stability     Float     @default(0)
+  difficulty    Float     @default(0)
+  elapsedDays   Int       @default(0)
+  scheduledDays Int       @default(0)
+  reps          Int       @default(0)
+  lapses        Int       @default(0)
+  lastReview    DateTime?
+
+  entry   VocabularyEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviews Review[]
+
+  @@index([userId, due])
+}
+
+model Review {
+  id             String    @id @default(uuid())
+  clientReviewId String    @unique // idempotency key from the phone
+  flashcardId    String
+  userId         String
+  rating         Rating
+  stateBefore    CardState
+  reviewedAt     DateTime // client clock, clamped server-side
+  durationMs     Int?
+  scheduledDays  Int
+  dueAfter       DateTime
+
+  flashcard Flashcard @relation(fields: [flashcardId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, reviewedAt])
+}

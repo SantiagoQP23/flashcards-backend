@@ -1,4 +1,0 @@
-src/generated
-pnpm-lock.yaml
-openapi.json
-prisma/migrations

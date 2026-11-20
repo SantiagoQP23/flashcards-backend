@@ -1,8 +1,0 @@
-node_modules/
-dist/
-coverage/
-src/generated/
-.env
-*.log
-.DS_Store
-*.tsbuildinfo

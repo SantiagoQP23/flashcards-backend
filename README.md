@@ -1,31 +1,66 @@
-# flashcards-backend
+# Intenli Flashcards API
 
-API for Intenli Flashcards: dictionary lookup, decks, saved vocabulary, spaced-repetition reviews and progress. Go with [chi](https://github.com/go-chi/chi), PostgreSQL through pgx, [sqlc](https://sqlc.dev) queries, [goose](https://github.com/pressly/goose) migrations, and a spec-first OpenAPI contract with [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen).
+Go + Chi backend for Intenli Flashcards: search an English word, hear it, save it, and review it with spaced repetition. The mobile app is [flashcards-app](https://github.com/SantiagoQP23/flashcards-app).
 
-## Run it locally
+## Requirements
+
+- Go (version in `go.mod`)
+- Docker (for local PostgreSQL)
+
+## Run locally
 
 ```sh
-docker compose up -d   # PostgreSQL 16 on localhost:5432
-make migrate           # apply migrations/*.sql
-make run               # http://localhost:3000/v1/health, spec at /openapi.yaml
+cp .env.example .env
+make db-up     # Postgres 16 on localhost:5432 (also creates flashcards_test)
+make run       # API on http://localhost:8080, applies migrations in development
 ```
 
-## How the code is organised
+Check it: `curl localhost:8080/healthz` (process is up) and `curl localhost:8080/readyz` (database reachable). From the Android emulator the API is at `http://10.0.2.2:8080`.
 
-| Path | What lives there |
+## Commands
+
+| Command | What it does |
 | --- | --- |
-| `api/openapi.yaml` | The API contract. The server interface and the app's TypeScript client are both generated from it. |
-| `cmd/api`, `cmd/migrate` | The API server and the migration runner. |
-| `internal/httpapi` | chi router, middleware and the handlers implementing the generated `StrictServerInterface`. |
-| `internal/db` | pgx pool, migrations runner, and sqlc code generated from `internal/db/queries/*.sql`. |
-| `internal/config` | Environment settings (`APP_ENV`, `PORT`, `DATABASE_URL`). |
-| `migrations` | goose SQL migrations, embedded in the binary. |
+| `make run` | Start the API |
+| `make migrate` | Apply pending migrations and exit (`api migrate` in production) |
+| `make test` | Unit tests |
+| `make test-db` | Unit tests plus tests against the local test database |
+| `make lint` | `go vet` and `gofmt` check |
+| `make build` | Build `bin/api` |
 
-## Adding an endpoint
+## Layout
 
-1. Describe it in `api/openapi.yaml`.
-2. Add any SQL to `internal/db/queries/` (and a migration if the schema changes).
-3. `make generate`, then implement the new method on `httpapi.Server`. The build fails until you do.
-4. `make lint test`, and commit the generated files.
+| Path | What |
+| --- | --- |
+| `cmd/api` | Entry point: config, logger, migrations, HTTP server with graceful shutdown |
+| `internal/config` | Environment variables |
+| `internal/database` | pgx connection pool |
+| `internal/store` | Hand-written SQL, one file per table group (`InTx`, `ErrNotFound`, `ErrConflict`) |
+| `internal/httpapi` | Chi router, middleware, handlers, JSON helpers |
+| `migrations` | goose SQL files, embedded in the binary |
 
-Code generators run through `go tool`, so they need nothing installed beyond Go. Linting uses [golangci-lint](https://golangci-lint.run) v2.
+## Configuration
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `DATABASE_URL` | (required) | PostgreSQL connection string |
+| `APP_ENV` | `development` | `development` or `production` (JSON logs) |
+| `HTTP_ADDR` | `:8080` | |
+| `AUTO_MIGRATE` | `true` in development, `false` in production | Apply migrations on startup |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:8081` in development, none in production | Comma-separated browser origins (Expo web); native apps don't need CORS |
+
+## API
+
+JSON fields are snake_case, and lists are `{"data": [...]}`.
+
+Errors are `{"error": {"code", "message"}}`. The `code` is the contract: the app shows its own translated text for it, and `message` is English for developers. Bad input is `invalid_request`; form errors a user can cause get specific codes.
+
+Languages: Spanish (`es`, the default) and English (`en`), stored per user in `users.locale`.
+
+| Route | Who | What |
+| --- | --- | --- |
+| `GET /healthz` | anyone | `{"status":"ok"}` while the process is up |
+| `GET /readyz` | anyone | `{"status":"ready"}`, or `503 database_unavailable` |
+
+Routes for auth, search, saved words, decks and reviews are added milestone by milestone (see the build plan).

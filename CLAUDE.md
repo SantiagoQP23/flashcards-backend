@@ -1,9 +1,9 @@
 # flashcards-backend
 
-Backend of Intenli Flashcards in Go. The build plan (milestones, data model, API contracts) is the "Intenli Flashcards Build Plan" doc; the mobile app is `SantiagoQP23/flashcards-app`.
+Backend of Intenli Flashcards in Go. The build plan (milestones, data model, API contracts) is the "Intenli Flashcards Build Plan" doc; the mobile app is `SantiagoQP23/flashcards-app`. Setup and conventions follow `SantiagoQP23/intenli-money-backend`.
 
-- Router: chi. Handlers implement the oapi-codegen `StrictServerInterface` generated from `api/openapi.yaml` (spec first: change the spec, `make generate`, then implement).
-- Database: PostgreSQL via pgx/v5. Queries are written in `internal/db/queries/*.sql` and generated with sqlc; schema changes are new goose files in `migrations/` (never edit an applied one).
-- Generators run via `go tool` (see the `tool` block in go.mod). Commit generated files; CI fails if they are stale.
-- The app regenerates its TypeScript client from `api/openapi.yaml`, so keep response shapes stable or update the app in the same change.
-- Before pushing: `make generate lint test` (tests that need Postgres run when `DATABASE_URL` is set).
+- Router: chi with hand-written handlers in `internal/httpapi`. Use `decodeJSON`, `writeJSON`, `writeError` and `internalError`; errors are `{"error":{"code","message"}}`, JSON is snake_case, lists are `{"data":[...]}`.
+- Database: PostgreSQL via pgx/v5. SQL lives in `internal/store` (hand-written, one file per table group, `InTx` for transactions). Schema changes are new goose files in `migrations/` (never edit an applied one).
+- The README's API table is the contract with the app, which keeps its own types in `src/api/`. Update both in the same change when a route or response shape changes.
+- Config comes from env vars (`internal/config`, documented in the README and `.env.example`).
+- Before pushing: `make lint test-db` (needs `make db-up`, or set `TEST_DATABASE_URL`).

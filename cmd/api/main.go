@@ -1,4 +1,9 @@
 // Command api runs the Intenli Flashcards HTTP API.
+//
+// Usage:
+//
+//	api            start the HTTP server (runs pending migrations first when AUTO_MIGRATE is on)
+//	api migrate    apply pending migrations and exit
 package main
 
 import (
@@ -13,40 +18,64 @@ import (
 	"time"
 
 	"github.com/SantiagoQP23/flashcards-backend/internal/config"
-	"github.com/SantiagoQP23/flashcards-backend/internal/db"
+	"github.com/SantiagoQP23/flashcards-backend/internal/database"
 	"github.com/SantiagoQP23/flashcards-backend/internal/httpapi"
+	"github.com/SantiagoQP23/flashcards-backend/migrations"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	if err := run(logger); err != nil {
-		logger.Error("api stopped", "error", err)
+	if err := run(os.Args[1:]); err != nil {
+		slog.Error("fatal", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger) error {
+func run(args []string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
+	logger := newLogger(cfg)
+	slog.SetDefault(logger)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	if len(args) > 0 && args[0] == "migrate" {
+		return migrations.Up(ctx, cfg.DatabaseURL)
+	}
+	if len(args) > 0 {
+		return fmt.Errorf("unknown command %q", args[0])
+	}
+
+	if cfg.AutoMigrate {
+		if err := migrations.Up(ctx, cfg.DatabaseURL); err != nil {
+			return err
+		}
+	}
+
+	pool, err := database.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
 
 	srv := &http.Server{
-		Addr:              fmt.Sprintf(":%d", cfg.Port),
-		Handler:           httpapi.NewRouter(httpapi.NewServer(pool), logger),
-		ReadHeaderTimeout: 10 * time.Second,
+		Addr: cfg.HTTPAddr,
+		Handler: httpapi.NewRouter(httpapi.Deps{
+			Logger:      logger,
+			DB:          pool,
+			CORSOrigins: cfg.CORSOrigins,
+		}),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
+
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("api listening", "addr", srv.Addr, "env", cfg.Env)
+		logger.Info("http server listening", "addr", cfg.HTTPAddr, "env", cfg.Env)
 		errCh <- srv.ListenAndServe()
 	}()
 
@@ -55,10 +84,19 @@ func run(logger *slog.Logger) error {
 		if !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
-		return nil
 	case <-ctx.Done():
+		logger.Info("shutting down")
 	}
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
+}
+
+func newLogger(cfg config.Config) *slog.Logger {
+	opts := &slog.HandlerOptions{Level: cfg.LogLevel}
+	if cfg.Env == config.EnvDevelopment {
+		return slog.New(slog.NewTextHandler(os.Stdout, opts))
+	}
+	return slog.New(slog.NewJSONHandler(os.Stdout, opts))
 }

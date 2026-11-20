@@ -1,0 +1,18 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: flashcards
+      POSTGRES_PASSWORD: flashcards
+      POSTGRES_DB: flashcards
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U flashcards']
+      interval: 5s
+      retries: 10
+
+volumes:
+  pgdata:

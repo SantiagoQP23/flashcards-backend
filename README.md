@@ -36,7 +36,7 @@ Check it: `curl localhost:8080/healthz` (process is up) and `curl localhost:8080
 | `internal/config` | Environment variables |
 | `internal/auth` | Passwords (argon2id), access tokens (JWT), refresh tokens, Google ID token check |
 | `internal/database` | pgx connection pool |
-| `internal/store` | Hand-written SQL, one file per table group (`InTx`, `ErrNotFound`, `ErrConflict`) |
+| `internal/store` | Hand-written SQL, one file per table group (`InTx`, `ErrNotFound`, `ErrConflict`); tests clear data with `DELETE FROM users`, not `TRUNCATE ... CASCADE`, which would also wipe the shared dictionary |
 | `internal/httpapi` | Chi router, middleware, handlers, JSON helpers |
 | `migrations` | goose SQL files, embedded in the binary |
 
@@ -77,6 +77,14 @@ Signed-in routes take `Authorization: Bearer <access_token>`. Without one the an
 | `GET /v1/me` | signed in | user |
 | `PATCH /v1/me` | signed in | `{display_name?, timezone?, locale?, preferred_accent?, daily_new_limit?}` → user. `""` clears `display_name` |
 | `DELETE /v1/me` | signed in | `204`; deletes the account and everything in it |
+| `GET /v1/decks` | signed in | `{data: [deck]}`, oldest first |
+| `POST /v1/decks` | signed in | `{name}` → `201` deck. Errors: `invalid_deck_name` (1 to 60 characters), `deck_name_taken` (409, ignores case) |
+| `PATCH /v1/decks/{id}` | signed in | `{name}` → deck. Errors as above, plus `404 deck_not_found` |
+| `DELETE /v1/decks/{id}` | signed in | `204`; deletes the deck and every saved word in it. `404 deck_not_found` |
+| `GET /v1/vocabulary` | signed in | `?deck_id&q&cursor&limit` → `{data: [entry], next_cursor}`, newest first. `q` matches anywhere in the word, `limit` is 1 to 100 (default 50), and `next_cursor` is `null` on the last page |
+| `POST /v1/vocabulary` | signed in | Save a meaning: `{deck_id, note?}` plus either `{word_id, definition_id}` (a dictionary meaning) or `{word, definition: {text, example?, part_of_speech?}}` (typed in by hand) → `201` entry. Errors: `deck_not_found` (404), `definition_not_found` (404), `already_saved` (409), `invalid_word` (1 to 100 characters), `invalid_definition` (text 1 to 500 characters) |
+| `PATCH /v1/vocabulary/{id}` | signed in | `{deck_id?, definition_id?, note?, definition?: {text?, example?, part_of_speech?}}` → entry. `deck_id` moves it, `definition_id` picks another meaning of the same word (its flashcard starts over), `definition` rewrites a typed-in meaning (`409 definition_not_editable` for dictionary meanings), `""` clears `note` or `example`. Errors: `entry_not_found` (404) and the ones above |
+| `DELETE /v1/vocabulary/{id}` | signed in | `204`; the word leaves its deck and the review queue, and its meaning can be saved again. `404 entry_not_found` |
 
 Auth routes answer `429 rate_limited` past `AUTH_RATE_LIMIT` requests a minute from one IP.
 
@@ -84,7 +92,28 @@ A **session** is `{user, access_token, refresh_token, token_type: "Bearer", expi
 
 A **user** is `{id, email, display_name, has_password, has_google, timezone, locale, preferred_accent, daily_new_limit, created_at}`. `timezone` is an IANA name (`America/Guayaquil`, default `UTC`), `locale` is `es` or `en`, `preferred_accent` is `US` or `UK`, `daily_new_limit` is 0 to 500 (default 20). `display_name` is `""` when not set.
 
-Routes for search, saved words, decks and reviews are added milestone by milestone (see the build plan).
+A **deck** is `{id, name, entry_count, due_count, created_at, updated_at}`. `due_count` counts its words whose flashcard is due now.
+
+An **entry** (a saved word) is:
+
+```json
+{
+  "id": "…", "deck_id": "…", "note": "", "created_at": "…", "updated_at": "…",
+  "word": {"id": "…", "text": "achieve", "phonetic_us": "/əˈtʃiːv/", "phonetic_uk": "/əˈtʃiːv/"},
+  "definition": {"id": "…", "part_of_speech": "verb", "text": "…", "example": "…", "synonyms": ["accomplish"], "is_custom": false},
+  "flashcard": {"id": "…", "state": "NEW", "due": "…"}
+}
+```
+
+`part_of_speech` is `""` or one of `noun`, `verb`, `adjective`, `adverb`, `pronoun`, `preposition`, `conjunction`, `interjection`, `phrase`. `is_custom` is true for a meaning the user typed in; only those can be rewritten. `flashcard.state` is `NEW`, `LEARNING`, `REVIEW` or `RELEARNING`.
+
+Routes for search and reviews are added milestone by milestone (see the build plan).
+
+### Decks and saved words
+
+- Every new account (password or Google) starts with a **starter deck**, "Vocabulario diario" or "Daily Vocabulary" by the account's language, holding 20 common words (migration `00006`, written by us, so they need no attribution). Accounts created before that migration don't get it.
+- Each saved word sits in exactly one deck; a meaning can be saved once per user. Deleting is soft (`deleted_at`) so devices can sync it later.
+- **Words typed in by hand** are private to the user who typed them: their meaning (and the word itself, when the dictionary doesn't have it) has `owner_id` set in `definitions` and `dictionary_words`. Dictionary lookups must only read rows where `owner_id IS NULL`.
 
 ### Sign-in rules
 
